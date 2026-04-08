@@ -63,7 +63,7 @@ OpenRouter is OpenAI-compatible.
 ```bash
 export OPENAI_API_KEY="<OPENROUTER_API_KEY>"
 export BASE_URL="https://openrouter.ai/api/v1"
-export MODEL="openai/gpt-4o-mini"
+export MODEL="openrouter/free"
 ./mini-agent.sh
 ```
 
