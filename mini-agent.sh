@@ -127,11 +127,13 @@ TXT
 
 MESSAGES='[]'
 
+# Append one JSON message object to in-memory conversation history.
 append_message() {
   local msg_json="$1"
   MESSAGES=$(jq -c --argjson m "$msg_json" '. + [$m]' <<<"$MESSAGES")
 }
 
+# Tool: read a file path and return text content (with size cap).
 run_read_file() {
   local args_json="$1"
   local path
@@ -152,6 +154,7 @@ run_read_file() {
   printf '%s' "$out"
 }
 
+# Tool: write full file content (overwrite), creating parent dirs if needed.
 run_write_file() {
   local args_json="$1"
   local path content dir
@@ -167,6 +170,7 @@ run_write_file() {
   printf '%s' "Written: $path"
 }
 
+# Tool: execute shell command with timeout and minimal destructive-command filter.
 run_exec() {
   local args_json="$1"
   local cmd wd
@@ -200,6 +204,7 @@ run_exec() {
   printf '%s' "$output"
 }
 
+# Dispatches tool calls by exact tool name from model output.
 run_tool() {
   local name="$1"
   local args_json="$2"
@@ -211,6 +216,7 @@ run_tool() {
   esac
 }
 
+# Ensures runtime API calls are gated behind required credentials.
 require_api_key() {
   if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     echo "Error: OPENAI_API_KEY is required." >&2
@@ -218,6 +224,7 @@ require_api_key() {
   fi
 }
 
+# Builds and sends one OpenAI-compatible Chat Completions request.
 call_model() {
   local req
   req=$(jq -n \
@@ -239,6 +246,7 @@ call_model() {
     -d "$req"
 }
 
+# Executes one user turn, including iterative tool-calling until final text reply.
 run_turn() {
   local user_text="$1"
   append_message "$(jq -n --arg t "$user_text" '{role:"user", content:$t}')"
@@ -297,6 +305,7 @@ run_turn() {
   return 1
 }
 
+# Prints built-in CLI usage and provider setup documentation.
 print_help() {
   cat <<'TXT'
 mini-agent.sh - Minimal tool-calling CLI coding agent
@@ -356,6 +365,7 @@ SAFETY / LIMITS
 TXT
 }
 
+# Entry point: parse flags, enforce prerequisites, run single-turn or REPL mode.
 main() {
   case "${1:-}" in
     -h|--help|--docs)
