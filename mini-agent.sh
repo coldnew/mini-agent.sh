@@ -57,9 +57,15 @@ set -euo pipefail
 #     ./mini-agent.sh
 # -----------------------------------------------------------------------------
 
+# Runtime defaults. These can be overridden by environment variables.
 MODEL="${MODEL:-gpt-4o-mini}"
 BASE_URL="${BASE_URL:-https://api.openai.com/v1}"
 MAX_ITERS="${MAX_ITERS:-8}"
+
+# Operational limits used by tools to keep responses bounded and prevent hangs.
+# Keeping these centralized makes behavior explicit and easy to tune.
+TOOL_TIMEOUT_SECONDS="${TOOL_TIMEOUT_SECONDS:-30}"
+TOOL_MAX_OUTPUT_CHARS="${TOOL_MAX_OUTPUT_CHARS:-12000}"
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "Error: curl not found" >&2
@@ -118,6 +124,8 @@ TOOLS_JSON='[
   }
 ]'
 
+# System prompt intentionally stays short. This script demonstrates tool-loop
+# mechanics, so prompt policy remains minimal and easy to inspect.
 SYSTEM_PROMPT=$(cat <<'TXT'
 You are a minimal CLI coding assistant.
 Use tools when needed.
@@ -127,13 +135,41 @@ TXT
 
 MESSAGES='[]'
 
-# Append one JSON message object to in-memory conversation history.
+# -----------------------------------------------------------------------------
+# append_message
+# -----------------------------------------------------------------------------
+# Purpose:
+#   Append one JSON message object to the in-memory conversation array.
+#
+# Input:
+#   $1 = JSON object with message shape expected by Chat Completions API.
+#
+# Behavior:
+#   - Uses jq `--argjson` for structural insertion (not string concat),
+#     reducing JSON escaping bugs.
+#   - Preserves order of conversation turns.
+# -----------------------------------------------------------------------------
 append_message() {
   local msg_json="$1"
   MESSAGES=$(jq -c --argjson m "$msg_json" '. + [$m]' <<<"$MESSAGES")
 }
 
-# Tool: read a file path and return text content (with size cap).
+# -----------------------------------------------------------------------------
+# run_read_file
+# -----------------------------------------------------------------------------
+# Tool implementation for `read_file`.
+#
+# Input JSON:
+#   {"path": "<file path>"}
+#
+# Output:
+#   Plain text string returned to model as tool result.
+#
+# Design notes:
+#   - Returns user-facing error text instead of non-zero exit, so the tool loop
+#     can continue and model can recover with a corrected call.
+#   - Truncates large files to protect token budget and terminal output size.
+# -----------------------------------------------------------------------------
 run_read_file() {
   local args_json="$1"
   local path
@@ -148,13 +184,27 @@ run_read_file() {
   fi
   local out
   out=$(cat -- "$path" 2>&1 || true)
-  if (( ${#out} > 12000 )); then
-    out="${out:0:12000}\n...[truncated]"
+  if (( ${#out} > TOOL_MAX_OUTPUT_CHARS )); then
+    out="${out:0:TOOL_MAX_OUTPUT_CHARS}\n...[truncated]"
   fi
   printf '%s' "$out"
 }
 
-# Tool: write full file content (overwrite), creating parent dirs if needed.
+# -----------------------------------------------------------------------------
+# run_write_file
+# -----------------------------------------------------------------------------
+# Tool implementation for `write_file`.
+#
+# Input JSON:
+#   {"path": "<file path>", "content": "<full text content>"}
+#
+# Output:
+#   Status text ("Written: <path>") or validation error text.
+#
+# Design notes:
+#   - Overwrite behavior is explicit and deterministic.
+#   - Parent directories are created automatically to simplify model usage.
+# -----------------------------------------------------------------------------
 run_write_file() {
   local args_json="$1"
   local path content dir
@@ -170,7 +220,26 @@ run_write_file() {
   printf '%s' "Written: $path"
 }
 
-# Tool: execute shell command with timeout and minimal destructive-command filter.
+# -----------------------------------------------------------------------------
+# run_exec
+# -----------------------------------------------------------------------------
+# Tool implementation for `exec`.
+#
+# Input JSON:
+#   {"command":"<shell command>", "working_dir":"<optional dir>"}
+#
+# Output:
+#   Combined stdout/stderr text, or validation/safety error text.
+#
+# Safety model:
+#   - Lightweight regex blocklist for obviously destructive commands.
+#   - Per-command timeout to avoid hanging the agent loop.
+#   - Returns tool text instead of exiting on command failure, allowing the
+#     model to inspect failure output and retry with adjustments.
+#
+# Scope note:
+#   This is intentionally a minimal safety layer and not a full sandbox.
+# -----------------------------------------------------------------------------
 run_exec() {
   local args_json="$1"
   local cmd wd
@@ -190,21 +259,29 @@ run_exec() {
 
   local output
   if [[ -n "$wd" ]]; then
-    output=$(timeout 30s bash -lc "cd -- $(printf '%q' "$wd") && $cmd" 2>&1 || true)
+    output=$(timeout "${TOOL_TIMEOUT_SECONDS}s" bash -lc "cd -- $(printf '%q' "$wd") && $cmd" 2>&1 || true)
   else
-    output=$(timeout 30s bash -lc "$cmd" 2>&1 || true)
+    output=$(timeout "${TOOL_TIMEOUT_SECONDS}s" bash -lc "$cmd" 2>&1 || true)
   fi
 
   if [[ -z "$output" ]]; then
     output="(no output)"
   fi
-  if (( ${#output} > 12000 )); then
-    output="${output:0:12000}\n...[truncated]"
+  if (( ${#output} > TOOL_MAX_OUTPUT_CHARS )); then
+    output="${output:0:TOOL_MAX_OUTPUT_CHARS}\n...[truncated]"
   fi
   printf '%s' "$output"
 }
 
-# Dispatches tool calls by exact tool name from model output.
+# -----------------------------------------------------------------------------
+# run_tool
+# -----------------------------------------------------------------------------
+# Routes a tool call by name to its implementation.
+#
+# Behavior:
+#   - Only known tools are executable.
+#   - Unknown tool names become explicit error text for model recovery.
+# -----------------------------------------------------------------------------
 run_tool() {
   local name="$1"
   local args_json="$2"
@@ -216,7 +293,12 @@ run_tool() {
   esac
 }
 
-# Ensures runtime API calls are gated behind required credentials.
+# -----------------------------------------------------------------------------
+# require_api_key
+# -----------------------------------------------------------------------------
+# Validates credentials only for runtime model calls (not for --help/--docs),
+# which keeps documentation accessible without environment setup.
+# -----------------------------------------------------------------------------
 require_api_key() {
   if [[ -z "${OPENAI_API_KEY:-}" ]]; then
     echo "Error: OPENAI_API_KEY is required." >&2
@@ -224,7 +306,17 @@ require_api_key() {
   fi
 }
 
-# Builds and sends one OpenAI-compatible Chat Completions request.
+# -----------------------------------------------------------------------------
+# call_model
+# -----------------------------------------------------------------------------
+# Builds one Chat Completions request from current in-memory state and sends it
+# to an OpenAI-compatible endpoint.
+#
+# Request composition:
+#   - Prepends one system message.
+#   - Appends conversation messages collected in MESSAGES.
+#   - Attaches declared tool schema and enables auto tool choice.
+# -----------------------------------------------------------------------------
 call_model() {
   local req
   req=$(jq -n \
@@ -246,7 +338,23 @@ call_model() {
     -d "$req"
 }
 
-# Executes one user turn, including iterative tool-calling until final text reply.
+# -----------------------------------------------------------------------------
+# run_turn
+# -----------------------------------------------------------------------------
+# Executes one complete user turn.
+#
+# Loop algorithm:
+#   1) Append user message.
+#   2) Call model.
+#   3) If assistant returned tool_calls:
+#      - Execute each tool
+#      - Append tool results
+#      - Repeat
+#   4) If assistant returned normal content, print and finish.
+#
+# Guardrail:
+#   MAX_ITERS prevents infinite tool-call loops on bad prompts or provider bugs.
+# -----------------------------------------------------------------------------
 run_turn() {
   local user_text="$1"
   append_message "$(jq -n --arg t "$user_text" '{role:"user", content:$t}')"
@@ -305,7 +413,11 @@ run_turn() {
   return 1
 }
 
-# Prints built-in CLI usage and provider setup documentation.
+# -----------------------------------------------------------------------------
+# print_help
+# -----------------------------------------------------------------------------
+# Prints embedded documentation and provider setup examples.
+# -----------------------------------------------------------------------------
 print_help() {
   cat <<'TXT'
 mini-agent.sh - Minimal tool-calling CLI coding agent
@@ -358,14 +470,22 @@ PROVIDER EXAMPLES
     ./mini-agent.sh
 
 SAFETY / LIMITS
-  - exec tool command timeout: 30s
-  - tool output truncation: ~12000 chars
+  - exec tool command timeout: 30s (default)
+  - tool output truncation: ~12000 chars (default)
   - blocked patterns include:
     rm -rf, mkfs, dd if=, shutdown, reboot, poweroff
 TXT
 }
 
-# Entry point: parse flags, enforce prerequisites, run single-turn or REPL mode.
+# -----------------------------------------------------------------------------
+# main
+# -----------------------------------------------------------------------------
+# Entry point:
+#   - Handles docs flags early.
+#   - Enforces API key requirement for runtime model usage.
+#   - Runs single-turn mode when positional args exist.
+#   - Otherwise runs interactive REPL loop.
+# -----------------------------------------------------------------------------
 main() {
   case "${1:-}" in
     -h|--help|--docs)
