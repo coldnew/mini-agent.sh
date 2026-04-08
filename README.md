@@ -50,10 +50,7 @@ So switching providers is done by changing `BASE_URL`, `MODEL`, and API key env 
 ### 1) OpenAI
 
 ```bash
-export OPENAI_API_KEY="<OPENAI_KEY>"
-export BASE_URL="https://api.openai.com/v1"
-export MODEL="gpt-4o-mini"
-./mini-agent.sh
+OPENAI_API_KEY="<OPENAI_KEY>" BASE_URL="https://api.openai.com/v1" MODEL="gpt-4o-mini" ./mini-agent.sh
 ```
 
 ### 2) OpenRouter
@@ -61,10 +58,7 @@ export MODEL="gpt-4o-mini"
 OpenRouter is OpenAI-compatible.
 
 ```bash
-export OPENAI_API_KEY="<OPENROUTER_API_KEY>"
-export BASE_URL="https://openrouter.ai/api/v1"
-export MODEL="openrouter/free"
-./mini-agent.sh
+OPENAI_API_KEY="<OPENROUTER_API_KEY>" BASE_URL="https://openrouter.ai/api/v1" MODEL="openrouter/free" ./mini-agent.sh
 ```
 
 Notes:
@@ -78,10 +72,7 @@ Ollama exposes an OpenAI-compatible endpoint when enabled in your setup.
 
 ```bash
 # Example local endpoint (adjust for your Ollama configuration)
-export OPENAI_API_KEY="ollama"
-export BASE_URL="http://localhost:11434/v1"
-export MODEL="llama3.1"
-./mini-agent.sh
+OPENAI_API_KEY="ollama" BASE_URL="http://localhost:11434/v1" MODEL="llama3.1" ./mini-agent.sh
 ```
 
 Notes:
@@ -97,10 +88,7 @@ LM Studio provides a local OpenAI-compatible server.
 2. Set endpoint and model:
 
 ```bash
-export OPENAI_API_KEY="lm-studio"
-export BASE_URL="http://localhost:1234/v1"
-export MODEL="<loaded-model-id>"
-./mini-agent.sh
+OPENAI_API_KEY="lm-studio" BASE_URL="http://localhost:1234/v1" MODEL="<loaded-model-id>" ./mini-agent.sh
 ```
 
 Notes:
