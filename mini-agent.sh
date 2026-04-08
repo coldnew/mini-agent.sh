@@ -1,21 +1,65 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Minimal tool-calling agent (RAM-only memory, no skills, no MCP).
-# Requirements: bash, curl, jq
-# Env:
-#   OPENAI_API_KEY (required)
-#   MODEL           (optional, default: gpt-4o-mini)
-#   BASE_URL        (optional, default: https://api.openai.com/v1)
+# -----------------------------------------------------------------------------
+# mini-agent.sh
+# -----------------------------------------------------------------------------
+# Minimal tool-calling CLI coding agent:
+# - RAM-only conversation memory (no persistence)
+# - No skills, no MCP
+# - OpenAI-compatible Chat Completions API
+#
+# Requirements:
+#   - bash
+#   - curl
+#   - jq
+#
+# Environment variables:
+#   OPENAI_API_KEY  Required. API key sent as Bearer token.
+#   MODEL           Optional. Default: gpt-4o-mini
+#   BASE_URL        Optional. Default: https://api.openai.com/v1
+#   MAX_ITERS       Optional. Max tool-call loops per user turn. Default: 8
+#
+# Usage:
+#   Interactive mode:
+#     ./mini-agent.sh
+#
+#   Single-turn mode:
+#     ./mini-agent.sh "summarize this repository"
+#
+#   Show embedded docs:
+#     ./mini-agent.sh --help
+#     ./mini-agent.sh --docs
+#
+# Provider examples:
+#   OpenAI:
+#     OPENAI_API_KEY=<OPENAI_KEY> \
+#     BASE_URL=https://api.openai.com/v1 \
+#     MODEL=gpt-4o-mini \
+#     ./mini-agent.sh
+#
+#   OpenRouter:
+#     OPENAI_API_KEY=<OPENROUTER_API_KEY> \
+#     BASE_URL=https://openrouter.ai/api/v1 \
+#     MODEL=openai/gpt-4o-mini \
+#     ./mini-agent.sh
+#
+#   Ollama (OpenAI-compatible endpoint):
+#     OPENAI_API_KEY=ollama \
+#     BASE_URL=http://localhost:11434/v1 \
+#     MODEL=llama3.1 \
+#     ./mini-agent.sh
+#
+#   LM Studio (OpenAI-compatible local server):
+#     OPENAI_API_KEY=lm-studio \
+#     BASE_URL=http://localhost:1234/v1 \
+#     MODEL=<loaded-model-id> \
+#     ./mini-agent.sh
+# -----------------------------------------------------------------------------
 
 MODEL="${MODEL:-gpt-4o-mini}"
 BASE_URL="${BASE_URL:-https://api.openai.com/v1}"
 MAX_ITERS="${MAX_ITERS:-8}"
-
-if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-  echo "Error: OPENAI_API_KEY is required." >&2
-  exit 1
-fi
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "Error: curl not found" >&2
@@ -167,6 +211,13 @@ run_tool() {
   esac
 }
 
+require_api_key() {
+  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+    echo "Error: OPENAI_API_KEY is required." >&2
+    exit 1
+  fi
+}
+
 call_model() {
   local req
   req=$(jq -n \
@@ -248,14 +299,73 @@ run_turn() {
 
 print_help() {
   cat <<'TXT'
-Commands:
-  /help   Show help
-  /clear  Clear in-RAM conversation history
-  /quit   Exit
+mini-agent.sh - Minimal tool-calling CLI coding agent
+
+USAGE
+  ./mini-agent.sh
+  ./mini-agent.sh "your prompt"
+  ./mini-agent.sh --help
+  ./mini-agent.sh --docs
+
+REQUIREMENTS
+  - bash
+  - curl
+  - jq
+
+ENVIRONMENT
+  OPENAI_API_KEY (required)
+  MODEL           (optional, default: gpt-4o-mini)
+  BASE_URL        (optional, default: https://api.openai.com/v1)
+  MAX_ITERS       (optional, default: 8)
+
+INTERACTIVE COMMANDS
+  /help    Show this help
+  /clear   Clear in-RAM conversation history
+  /quit    Exit (same as /exit)
+
+PROVIDER EXAMPLES
+  OpenAI:
+    export OPENAI_API_KEY="<OPENAI_KEY>"
+    export BASE_URL="https://api.openai.com/v1"
+    export MODEL="gpt-4o-mini"
+    ./mini-agent.sh
+
+  OpenRouter:
+    export OPENAI_API_KEY="<OPENROUTER_API_KEY>"
+    export BASE_URL="https://openrouter.ai/api/v1"
+    export MODEL="openai/gpt-4o-mini"
+    ./mini-agent.sh
+
+  Ollama:
+    export OPENAI_API_KEY="ollama"
+    export BASE_URL="http://localhost:11434/v1"
+    export MODEL="llama3.1"
+    ./mini-agent.sh
+
+  LM Studio:
+    export OPENAI_API_KEY="lm-studio"
+    export BASE_URL="http://localhost:1234/v1"
+    export MODEL="<loaded-model-id>"
+    ./mini-agent.sh
+
+SAFETY / LIMITS
+  - exec tool command timeout: 30s
+  - tool output truncation: ~12000 chars
+  - blocked patterns include:
+    rm -rf, mkfs, dd if=, shutdown, reboot, poweroff
 TXT
 }
 
 main() {
+  case "${1:-}" in
+    -h|--help|--docs)
+      print_help
+      return
+      ;;
+  esac
+
+  require_api_key
+
   if (( $# > 0 )); then
     run_turn "$*"
     return
