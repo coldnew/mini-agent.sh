@@ -41,7 +41,7 @@ set -euo pipefail
 #   OpenRouter:
 #     OPENAI_API_KEY=<OPENROUTER_API_KEY> \
 #     BASE_URL=https://openrouter.ai/api/v1 \
-#     MODEL=openai/gpt-4o-mini \
+#     MODEL=openrouter/free \
 #     ./mini-agent.sh
 #
 #   Ollama (OpenAI-compatible endpoint):
@@ -454,7 +454,7 @@ PROVIDER EXAMPLES
   OpenRouter:
     export OPENAI_API_KEY="<OPENROUTER_API_KEY>"
     export BASE_URL="https://openrouter.ai/api/v1"
-    export MODEL="openai/gpt-4o-mini"
+    export MODEL="openrouter/free"
     ./mini-agent.sh
 
   Ollama:
