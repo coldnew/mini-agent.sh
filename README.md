@@ -37,7 +37,14 @@ Single-turn mode:
 
 - `/help` show commands
 - `/clear` clear in-memory conversation
+- `/export [path]` export in-memory curl request/response logs to a file
 - `/quit` (or `/exit`) leave the session
+
+Notes:
+
+- API request/response logs are kept in memory during the session.
+- `/export` writes to `mini-agent-save-YYYYMMDD-HHMMSS.log` in current directory.
+- `/export my-log.txt` writes to the path you provide.
 
 ## Provider Setup
 
