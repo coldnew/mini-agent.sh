@@ -134,6 +134,8 @@ TXT
 )
 
 MESSAGES='[]'
+CURL_EXCHANGE_LOG=""
+MODEL_RESPONSE=""
 
 # -----------------------------------------------------------------------------
 # append_message
@@ -152,6 +154,41 @@ MESSAGES='[]'
 append_message() {
   local msg_json="$1"
   MESSAGES=$(jq -c --argjson m "$msg_json" '. + [$m]' <<<"$MESSAGES")
+}
+
+# -----------------------------------------------------------------------------
+# log_curl_exchange
+# -----------------------------------------------------------------------------
+# Appends one request/response pair to in-memory log text.
+# -----------------------------------------------------------------------------
+log_curl_exchange() {
+  local req_json="$1"
+  local resp_json="$2"
+  local entry
+  printf -v entry '=== %s ===\nPOST %s/chat/completions\n--- request ---\n%s\n--- response ---\n%s\n\n' \
+    "$(date '+%Y-%m-%d %H:%M:%S %z')" \
+    "$BASE_URL" \
+    "$req_json" \
+    "$resp_json"
+  CURL_EXCHANGE_LOG+="$entry"
+}
+
+# -----------------------------------------------------------------------------
+# export_curl_exchange_log
+# -----------------------------------------------------------------------------
+# Saves in-memory request/response log text to disk.
+# -----------------------------------------------------------------------------
+export_curl_exchange_log() {
+  local path="$1"
+  if [[ -z "$path" ]]; then
+    path="mini-agent-save-$(date '+%Y%m%d-%H%M%S').log"
+  fi
+  if [[ "$path" != /* ]]; then
+    path="$PWD/$path"
+  fi
+  mkdir -p -- "$(dirname -- "$path")"
+  printf '%s' "$CURL_EXCHANGE_LOG" > "$path"
+  printf '%s' "$path"
 }
 
 # -----------------------------------------------------------------------------
@@ -319,6 +356,7 @@ require_api_key() {
 # -----------------------------------------------------------------------------
 call_model() {
   local req
+  local resp
   req=$(jq -n \
     --arg model "$MODEL" \
     --arg system "$SYSTEM_PROMPT" \
@@ -332,10 +370,13 @@ call_model() {
       stream: false
     }')
 
-  curl -sS "$BASE_URL/chat/completions" \
+  resp=$(curl -sS "$BASE_URL/chat/completions" \
     -H "Content-Type: application/json" \
     -H "Authorization: Bearer $OPENAI_API_KEY" \
-    -d "$req"
+    -d "$req")
+
+  log_curl_exchange "$req" "$resp"
+  MODEL_RESPONSE="$resp"
 }
 
 # -----------------------------------------------------------------------------
@@ -362,7 +403,8 @@ run_turn() {
   local iter
   for ((iter=1; iter<=MAX_ITERS; iter++)); do
     local resp
-    resp=$(call_model)
+    call_model
+    resp="$MODEL_RESPONSE"
 
     if ! jq -e . >/dev/null 2>&1 <<<"$resp"; then
       echo "Error: model returned non-JSON response" >&2
@@ -442,6 +484,7 @@ ENVIRONMENT
 INTERACTIVE COMMANDS
   /help    Show this help
   /clear   Clear in-RAM conversation history
+  /export [path]  Export in-memory curl request/response log to a file
   /quit    Exit (same as /exit)
 
 PROVIDER EXAMPLES
@@ -517,6 +560,20 @@ main() {
       /quit|/exit) break ;;
       /help) print_help; continue ;;
       /clear) MESSAGES='[]'; echo "(cleared)"; continue ;;
+      /export)
+        echo "(exported: $(export_curl_exchange_log ""))"
+        continue
+        ;;
+      /export\ *)
+        local save_path
+        save_path="${line#/export }"
+        if [[ -z "$save_path" ]]; then
+          echo "Usage: /export [path]"
+          continue
+        fi
+        echo "(exported: $(export_curl_exchange_log "$save_path"))"
+        continue
+        ;;
     esac
 
     if ! run_turn "$line"; then
