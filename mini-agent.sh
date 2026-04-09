@@ -157,6 +157,16 @@ append_message() {
 }
 
 # -----------------------------------------------------------------------------
+# prettify_json_or_raw
+# -----------------------------------------------------------------------------
+# Pretty-print valid JSON; otherwise return input unchanged.
+# -----------------------------------------------------------------------------
+prettify_json_or_raw() {
+  local data="$1"
+  jq '.' <<<"$data" 2>/dev/null || printf '%s' "$data"
+}
+
+# -----------------------------------------------------------------------------
 # log_curl_exchange
 # -----------------------------------------------------------------------------
 # Appends one request/response pair to in-memory log text.
@@ -164,12 +174,15 @@ append_message() {
 log_curl_exchange() {
   local req_json="$1"
   local resp_json="$2"
+  local pretty_req pretty_resp
   local entry
+  pretty_req=$(prettify_json_or_raw "$req_json")
+  pretty_resp=$(prettify_json_or_raw "$resp_json")
   printf -v entry '=== %s ===\nPOST %s/chat/completions\n--- request ---\n%s\n--- response ---\n%s\n\n' \
     "$(date '+%Y-%m-%d %H:%M:%S %z')" \
     "$BASE_URL" \
-    "$req_json" \
-    "$resp_json"
+    "$pretty_req" \
+    "$pretty_resp"
   CURL_EXCHANGE_LOG+="$entry"
 }
 
